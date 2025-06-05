@@ -19,6 +19,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "FileTransfer"
+rootProject.name = "WifiFileTransfer"
 include(":app")
  
