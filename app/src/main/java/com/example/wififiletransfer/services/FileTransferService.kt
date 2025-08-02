@@ -65,11 +65,23 @@ class FileTransferServer(private val context: Context) {
                     }
 
                     val baseDir = File(rootPaths[rootPath] ?: rootPaths["internal"]!!)
-                    val filesToZip = paths.map { File(baseDir, it) }
+                    val filesToDownload = paths.map { File(baseDir, it) }
 
+                    // Tek bir dosya varsa ve klasör değilse, doğrudan gönder
+                    if (filesToDownload.size == 1 && filesToDownload[0].isFile) {
+                        val file = filesToDownload[0]
+                        call.response.header(
+                            HttpHeaders.ContentDisposition,
+                            ContentDisposition.Attachment.withParameter(ContentDisposition.Parameters.FileName, file.name).toString()
+                        )
+                        call.respondFile(file)
+                        return@get
+                    }
+
+                    // Aksi halde ziple
                     val zipFile = File(cacheDir, "temp_${System.currentTimeMillis()}.zip")
                     ZipOutputStream(zipFile.outputStream()).use { zipOut ->
-                        for (file in filesToZip) {
+                        for (file in filesToDownload) {
                             if (file.exists() && file.canRead()) {
                                 if (file.isDirectory) {
                                     addDirectoryToZip(file, zipOut, file.name + "/")
@@ -319,7 +331,7 @@ class FileTransferServer(private val context: Context) {
         htmlBuilder.append("""
                     </ul>
                     <div class="mb-3">
-                        <button type="submit" formaction="/delete" class="btn btn-danger me-2">🗑️ Delete Selected</button>
+                        <button type="button" onclick="deleteSelected()" class="btn btn-danger me-2">🗑️ Delete Selected</button>
                         <button type="button" onclick="downloadSelected()" class="btn btn-primary">⬇️ Download Selected</button>
                     </div>
                 </form>
@@ -348,6 +360,19 @@ class FileTransferServer(private val context: Context) {
                     
                     window.location.href = '/download?' + params.toString();
                 }
+                
+                function deleteSelected() {
+                    const checkboxes = document.querySelectorAll('input[name="paths"]:checked');
+                    if (checkboxes.length === 0) {
+                        alert('Please select at least one file or folder to delete.');
+                        return;
+                    }
+
+                    const form = document.getElementById('mainForm');
+                    form.action = '/delete';
+                    form.submit();
+                }
+
             </script>
         </body>
         </html>
