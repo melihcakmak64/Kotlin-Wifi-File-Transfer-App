@@ -13,14 +13,14 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace = "com.example.wififiletransfer"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.solardevtech.wififiletransfer"
         minSdk = 24
-        targetSdk = 34
-        versionCode = 3
-        versionName = "1.2"
+        targetSdk = 36
+        versionCode = 5
+        versionName = "1.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
