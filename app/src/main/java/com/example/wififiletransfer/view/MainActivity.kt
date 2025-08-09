@@ -19,6 +19,7 @@ class MainActivity : AppCompatActivity() {
     private val viewModel: MainViewModel by viewModels()
 
     private lateinit var permissionsManager: PermissionsManager
+    private var isInitialPermissionRequest = true
 
     private val storageAccessLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -38,7 +39,17 @@ class MainActivity : AppCompatActivity() {
             binding.statusTextView.text = "Basic permissions granted"
         } else {
             binding.statusTextView.text = "Some permissions denied"
+            // Permission reddedildiyse settings'e yönlendir
+            if (!isInitialPermissionRequest) {
+                permissionsManager.showPermissionDeniedDialog(
+                    onOpenSettings = {
+                        val intent = permissionsManager.createAppSettingsIntent()
+                        startActivity(intent)
+                    }
+                )
+            }
         }
+        isInitialPermissionRequest = false
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -62,23 +73,29 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.startServerButton.setOnClickListener {
-           checkAndStartOrStopServer()
+            checkAndStartOrStopServer()
         }
     }
 
     private fun requestPermissions() {
         when {
             permissionsManager.needsAllFilesAccess() -> {
-                permissionsManager.showStorageAccessDialog(
+                // Android 11+ için direkt settings'e yönlendir
+                permissionsManager.showAllFilesAccessDialog(
                     onGrantAccess = {
                         permissionsManager.createAllFilesAccessIntent()?.let {
                             storageAccessLauncher.launch(it)
                         }
-                    },
+                    }
                 )
             }
             permissionsManager.needsLegacyStoragePermissions() -> {
-                requestPermissionsLauncher.launch(permissionsManager.getLegacyPermissionsToRequest())
+                // Android 10 ve altı için önce permission request diyaloğu göster
+                permissionsManager.showLegacyStoragePermissionDialog(
+                    onRequestPermission = {
+                        requestPermissionsLauncher.launch(permissionsManager.getLegacyPermissionsToRequest())
+                    }
+                )
             }
             else -> {
                 binding.statusTextView.text = "All required permissions already granted"
@@ -86,35 +103,36 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-
-    private fun showPermissionRequiredDialog() {
-        AlertDialog.Builder(this)
-            .setTitle("Permission Needed")
-            .setMessage("You have denied the All Files Access permission. Please enable it manually in app settings for full functionality.")
-            .setPositiveButton("Open Settings") { _, _ ->
-                // Ayarlar sayfasını aç
-                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                    data = "package:$packageName".toUri()
-                }
-                startActivity(intent)
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
-    }
-
     private fun checkAndStartOrStopServer() {
         when {
             permissionsManager.needsAllFilesAccess() -> {
-                permissionsManager.showStorageAccessDialog(
+                permissionsManager.showAllFilesAccessDialog(
                     onGrantAccess = {
                         permissionsManager.createAllFilesAccessIntent()?.let {
                             storageAccessLauncher.launch(it)
                         }
-                    },
+                    }
                 )
             }
             permissionsManager.needsLegacyStoragePermissions() -> {
-                requestPermissionsLauncher.launch(permissionsManager.getLegacyPermissionsToRequest())
+                // Server başlatırken permission kontrolü
+                if (permissionsManager.shouldShowLegacyPermissionRationale()) {
+                    // Daha önce reddedilmişse direkt settings'e yönlendir
+                    permissionsManager.showPermissionDeniedDialog(
+                        onOpenSettings = {
+                            val intent = permissionsManager.createAppSettingsIntent()
+                            startActivity(intent)
+                        }
+                    )
+                } else {
+                    // İlk kez istiyorsa permission dialog göster
+                    permissionsManager.showLegacyStoragePermissionDialog(
+                        onRequestPermission = {
+                            isInitialPermissionRequest = false
+                            requestPermissionsLauncher.launch(permissionsManager.getLegacyPermissionsToRequest())
+                        }
+                    )
+                }
             }
             else -> {
                 if (viewModel.isServerRunning.value == true) {
@@ -125,8 +143,4 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
-
-
-
-
 }
