@@ -1,41 +1,43 @@
 package com.example.wififiletransfer.view
 
-import android.Manifest
-import android.annotation.SuppressLint
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.net.Uri
-import android.os.Build
 import android.os.Bundle
-import android.os.Environment
 import android.provider.Settings
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
-import com.example.wififiletransfer.viewmodels.MainViewModel
 import com.example.wififiletransfer.databinding.ActivityMainBinding
+import com.example.wififiletransfer.utils.PermissionsManager
+import kotlin.getValue
+import com.example.wififiletransfer.viewmodels.MainViewModel
 import androidx.core.net.toUri
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private val viewModel: MainViewModel by viewModels()
 
-    // Storage Access Framework için launcher
+    private lateinit var permissionsManager: PermissionsManager
+
     private val storageAccessLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            if (Environment.isExternalStorageManager()) {
-                // Tam erişim verildi
-                binding.statusTextView.text = "Storage access granted"
-            } else {
-                // Erişim reddedildi
-                binding.statusTextView.text = "Storage access denied"
-            }
+    ) {
+        if (permissionsManager.needsAllFilesAccess()) {
+            binding.statusTextView.text = "Storage access denied"
+        } else {
+            binding.statusTextView.text = "Storage access granted"
+        }
+    }
+
+    private val requestPermissionsLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val allGranted = permissions.values.all { it }
+        if (allGranted) {
+            binding.statusTextView.text = "Basic permissions granted"
+        } else {
+            binding.statusTextView.text = "Some permissions denied"
         }
     }
 
@@ -46,6 +48,8 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        permissionsManager = PermissionsManager(this)
+
         requestPermissions()
 
         viewModel.ipAddress.observe(this) { ipAddress ->
@@ -53,99 +57,76 @@ class MainActivity : AppCompatActivity() {
         }
 
         viewModel.isServerRunning.observe(this) { isRunning ->
-            if (isRunning) {
-                binding.startServerButton.text = "Stop Server"
-            } else {
-                binding.startServerButton.text = "Start Server"
-                binding.ipAddressTextView.text = ""
-            }
+            binding.startServerButton.text = if (isRunning) "Stop Server" else "Start Server"
+            if (!isRunning) binding.ipAddressTextView.text = ""
         }
 
         binding.startServerButton.setOnClickListener {
-            if (viewModel.isServerRunning.value == true) {
-                viewModel.stopServer()
-            } else {
-                viewModel.startServer()
-            }
+           checkAndStartOrStopServer()
         }
     }
 
     private fun requestPermissions() {
-        val permissions = mutableListOf<String>()
-
-        // Temel izinler
-        permissions.add(Manifest.permission.INTERNET)
-        permissions.add(Manifest.permission.ACCESS_WIFI_STATE)
-        permissions.add(Manifest.permission.ACCESS_NETWORK_STATE)
-
-        // Android 13+ için medya izinleri
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissions.add(Manifest.permission.READ_MEDIA_IMAGES)
-            permissions.add(Manifest.permission.READ_MEDIA_VIDEO)
-            permissions.add(Manifest.permission.READ_MEDIA_AUDIO)
-        } else {
-            // Android 13 altı için eski izinler
-            permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-                permissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        when {
+            permissionsManager.needsAllFilesAccess() -> {
+                permissionsManager.showStorageAccessDialog(
+                    onGrantAccess = {
+                        permissionsManager.createAllFilesAccessIntent()?.let {
+                            storageAccessLauncher.launch(it)
+                        }
+                    },
+                )
             }
-        }
-
-        // İzin verilen izinleri filtrele
-        val permissionsToRequest = permissions.filter {
-            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-        }
-
-        if (permissionsToRequest.isNotEmpty()) {
-            ActivityCompat.requestPermissions(this, permissionsToRequest.toTypedArray(), 0)
-        }
-
-        // Android 11+ için All Files Access izni
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            if (!Environment.isExternalStorageManager()) {
-                showStorageAccessDialog()
+            permissionsManager.needsLegacyStoragePermissions() -> {
+                requestPermissionsLauncher.launch(permissionsManager.getLegacyPermissionsToRequest())
+            }
+            else -> {
+                binding.statusTextView.text = "All required permissions already granted"
             }
         }
     }
 
-    private fun showStorageAccessDialog() {
+
+    private fun showPermissionRequiredDialog() {
         AlertDialog.Builder(this)
-            .setTitle("Storage Access Required")
-            .setMessage("To access all files on your device, please grant 'All Files Access' permission in the next screen.")
-            .setPositiveButton("Grant Access") { _, _ ->
-                requestAllFilesAccess()
+            .setTitle("Permission Needed")
+            .setMessage("You have denied the All Files Access permission. Please enable it manually in app settings for full functionality.")
+            .setPositiveButton("Open Settings") { _, _ ->
+                // Ayarlar sayfasını aç
+                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = "package:$packageName".toUri()
+                }
+                startActivity(intent)
             }
-            .setNegativeButton("Cancel") { _, _ ->
-                binding.statusTextView.text = "Limited file access - only media files visible"
-            }
+            .setNegativeButton("Cancel", null)
             .show()
     }
 
-    private fun requestAllFilesAccess() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            try {
-                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
-                intent.data = "package:$packageName".toUri()
-                storageAccessLauncher.launch(intent)
-            } catch (e: Exception) {
-                val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
-                storageAccessLauncher.launch(intent)
+    private fun checkAndStartOrStopServer() {
+        when {
+            permissionsManager.needsAllFilesAccess() -> {
+                permissionsManager.showStorageAccessDialog(
+                    onGrantAccess = {
+                        permissionsManager.createAllFilesAccessIntent()?.let {
+                            storageAccessLauncher.launch(it)
+                        }
+                    },
+                )
+            }
+            permissionsManager.needsLegacyStoragePermissions() -> {
+                requestPermissionsLauncher.launch(permissionsManager.getLegacyPermissionsToRequest())
+            }
+            else -> {
+                if (viewModel.isServerRunning.value == true) {
+                    viewModel.stopServer()
+                } else {
+                    viewModel.startServer()
+                }
             }
         }
     }
 
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
 
-        val allGranted = grantResults.all { it == PackageManager.PERMISSION_GRANTED }
-        if (allGranted) {
-            binding.statusTextView.text = "Basic permissions granted"
-        } else {
-            binding.statusTextView.text = "Some permissions denied"
-        }
-    }
+
+
 }
